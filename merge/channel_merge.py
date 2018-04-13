@@ -127,7 +127,14 @@ def channel_combos(files):
     """ Infer channel colors from names and return a dict with the names of all
     files for each color
 
+    In
+    ---
     files : list of strings
+
+    Out
+    ---
+    combos : list of tuples, each tuple is one combo of rgb channels sorted
+        in order of (r,g,b). Imagemagick will expect this order.
     """
     colors = {'r' : [],
               'g' : [],
@@ -145,9 +152,12 @@ def channel_combos(files):
         elif c is 'b':
             colors['b'].append(f)
 
-    ## choose one item from each list, making all possible combos
+    # choose one item from each list, making all possible combos
     combos = [p for p in itertools.product(*colors.values())]
 
+    # reverse alpha sort each tuple so that order is rgb -- imagemagick assumes
+    # this order
+    combos = [sorted(t, reverse=True) for t in combos]
 
     # List of tuples, each tuple is one combo of rgb channels
     return combos
@@ -199,6 +209,26 @@ def merge_im(imgs, outdir):
     cmds.sort()
 
     return cmds
+def merge_im_dbg(imgs, outdir):
+    """ Generate the imagemagick merge commands.
+
+    imgs : dict 
+    """
+    # will be {outputname : tuple of r,g.b}
+    outs = {}
+
+    ## Generate output filenames
+    for imgid, rgb_tuples in imgs.iteritems():
+        for i in range(len(rgb_tuples)):
+            outname = '%s-rgb-%d.tif' %(imgid, i+1)
+            # don't append '-1' to first rgb combo outfile
+            outname = outname.replace('-1.tif', '.tif')
+            outs[outname] = rgb_tuples[i]
+
+    cmds = [im_command(v, k, outdir) for k, v in outs.iteritems()]
+    cmds.sort()
+
+    return cmds, outs
 
 ### Main 
 def main():
@@ -220,5 +250,8 @@ def main():
     for c in cmds:
         c = c.split(' ')
         subprocess.call(c)
+        print(c)
 
+# if there was a debug flag
+# locals().update(main())
 main()
