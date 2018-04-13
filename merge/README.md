@@ -10,7 +10,7 @@ Batch merge a folder of greyscale tiff color channel files into rgb images. Addi
 - [ImageMagick](https://www.imagemagick.org/script/index.php)
 
 ----
-# Usage Notes
+# Notes and Quirks
 
 ### Naming Conventions
 Assumes the following file naming conventions: `<id>-<channel_name>[optional '-2/-3/etc'].tif` e.g.,
@@ -34,10 +34,11 @@ e.g.,
 	44-guleinoiena.tif # green
 	10-b.tif           # blue
 	10-bfue.tif        # excluded (see Brightfield Exclusion below)
+	10-bf.tif          # excluded (see Brightfield Exclusion below)
 
 ### Brightfield Exclusion
 Any .tif with a `channel_name` *starting with* `bf` is assumed to be a brightfield image and is excluded from any merges. So as long as blue channels are not named `bf*` things should be okay.
 e.g.,
 
 	01-bf.tif, 01-bf-2.tif, 01-bf_actuallybluetrustme.tif # excluded
-	01-bl.tif, 01-blbfue.tif  # blue
+	01-bl.tif, 01-blbfue.tif                              # blue
