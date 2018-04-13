@@ -43,8 +43,8 @@ Terminology (for variable names):
 
 ### Script Info
 __author__ = 'Nick Chahley, https://github.com/nickchahley'
-__version__ = '0.1'
-__day__ = '2018-04-10'
+__version__ = '0.1.1'
+__day__ = '2018-04-13'
 
 import subprocess
 import os
