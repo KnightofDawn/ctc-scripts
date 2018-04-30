@@ -43,19 +43,42 @@ Terminology (for variable names):
 
 ### Script Info
 __author__ = 'Nick Chahley, https://github.com/nickchahley'
-__version__ = '0.1.1'
-__day__ = '2018-04-13'
+__version__ = '0.1.2'
+__day__ = '2018-04-30'
 
 import subprocess
 import os
 from glob import glob
 import itertools
+import argparse
+import sys
+
+### Command line flags/options
+parser = argparse.ArgumentParser()
+parser.add_argument('-v', '--debug', dest='debug', action='store_true')
+parser.set_defaults(debug=False)
+parser.add_argument('-d', '--defdir', type=str, help='Def dir for path dialog')
+# Access an arg value by the syntax 'args.<argument_name>'
+args = parser.parse_args()
 
 ### Options
 opt = {}
 opt['outdir'] = 'merged'
 
 ### Function Defs
+def popup_message(text = '', title='Message'):
+    try:
+        # Python 3.x imports
+        import tkinter as tk
+        from tkinter import messagebox
+    except ImportError:
+        # Fall back to 2.x
+        import Tkinter as tk
+        import tkMessageBox as messagebox
+
+    root = tk.Tk().withdraw()  # hide the root window
+
+    messagebox.showinfo(title, text)  # show the messagebo
 def path_dialog(whatyouwant):
     """ Prompt user to select a dir (def) or file, return its path
 
@@ -75,7 +98,10 @@ def path_dialog(whatyouwant):
 
     opt = {}
     opt['parent'] = root
-    opt['initialdir'] = './'
+
+    # opt['initialdir'] = './'
+    opt['initialdir'] = args.defdir if args.defdir else './'
+
 
     if whatyouwant == 'folder':
         from tkFileDialog import askdirectory
@@ -90,20 +116,57 @@ def path_dialog(whatyouwant):
         # opt['filetypes'] = (('CSV files', '*.csv'), ('All files', '*.*'))
 
     path = ask_fun(**opt)
+
+    # Quit if user doesn't select anything
+    # No idea why an unset path is of type tuple
+    if type(path) == tuple:
+        m = 'No path selected, exiting'
+        popup_message(m)
+        sys.exit(m)
+
     return path
-def rename_no_whitespace(filenames):
-    # Assume we are in dir containing files to be renamed
-    for f in filenames:
-        os.rename(f, f.replace(" ", "-"))
-def tiffs_clean_filter(filenames, whitespace=True):
+def format_trailing_nums(s):
+    import re
+
+    # trim .extension
+    sp = '.'.join(s.split('.')[:-1])
+
+    # match digits at end of string
+    m = re.search('\d+$', sp)
+    if not m:
+        # string does not end in num
+        new = s
+    else:
+        # string ends in num
+        endnum = m.group()
+        new = endnum.join(sp.split(endnum)[:-1])
+        if new[-1] == '-':
+            # Trailing '-', rm to avoid getting '01-blue--2.tif'
+            new = new[:-1]
+        ext = '.' + s.split('.')[-1]
+        new = '-'.join((new, endnum)) + ext
+
+    return new
+def format_filenames(filenames):
+    # replace whitespace
+    filenames = [f.replace(' ', '-') for f in filenames]
+    # ensure trailing digits are separated from channel_name w/ '-'
+    filenames = [format_trailing_nums(f) for f in filenames]
+
+    return filenames
+def rename(filenames):
+    for old, new in zip(filenames, format_filenames(filenames)):
+        os.rename(old, new)
+def tiffs_clean_filter(filenames):
     """ replace whitespace and exclude bright field tiff files
     """
-    if whitespace is True:
-        # only useful to exclude when testing w/ just list of filenames, not
-        # actual files
-        rename_no_whitespace(filenames)
+    # rename_no_whitespace(filenames)
+    rename(filenames)
     filenames = [f for f in filenames if '-bf' not in f]
     filenames.sort()
+    if args.debug:
+        print('sorted filenames bf excluded:')
+        print(filenames)
     return filenames
 def tiffs_group(filenames):
     """ Group the channel files into dict by 2 digit prefix in filename.
@@ -230,6 +293,26 @@ def merge_im_dbg(imgs, outdir):
 
     return cmds, outs
 
+### Graveyard
+def rename_no_whitespace(filenames):
+    # Assume we are in dir containing files to be renamed
+    for f in filenames:
+        os.rename(f, f.replace(" ", "-"))
+
+### Test
+## testing scratch
+def test():
+    names = ['06-blue.tif', '06-blue2.tif', '06-blue-2.tif', '06-b7ue.tif',
+             '06-blue10.tif', '07 red.tif', '07 red 2.tif', '07 red-3.tif']
+    renames = rename(names)
+
+    for n, r in zip(names, renames):
+        if n is not r:
+            print('%s >> %s' %(n, r))
+        else:
+            print(n)
+# test()
+
 ### Main 
 def main():
     path = path_dialog(whatyouwant = 'folder')
@@ -248,10 +331,17 @@ def main():
     # Messed up by making the command a straight string, subprocess takes a
     # command as a list with each item being a whitespace separation
     for c in cmds:
+        if args.debug:
+            f = '/'.join((opt['outdir'], 'debug.log'))
+            s = 'echo %s >> %s' %(c, f)
+            os.system(s)
         c = c.split(' ')
         subprocess.call(c)
         print(c)
 
-# if there was a debug flag
-# locals().update(main())
-main()
+# run the main function
+if __name__ == '__main__':
+    main()
+    popup_message('Run complete')
+    # TODO if there was a debug flag we could
+    # locals().update(main())
