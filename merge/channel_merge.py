@@ -164,9 +164,6 @@ def tiffs_clean_filter(filenames):
     rename(filenames)
     filenames = [f for f in filenames if '-bf' not in f]
     filenames.sort()
-    if args.debug:
-        print('sorted filenames bf excluded:')
-        print(filenames)
     return filenames
 def tiffs_group(filenames):
     """ Group the channel files into dict by 2 digit prefix in filename.
