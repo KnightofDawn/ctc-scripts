@@ -13,14 +13,17 @@ Batch merge a folder of greyscale tiff color channel files into rgb images. Addi
 # Usage Notes
 
 ### Naming Conventions
-Assumes the following file naming conventions: `<id>-<channel_name>[optional '-2/-3/etc'].tif` e.g.,
+Assumes the following file naming conventions: 
+- `<id>-<channel_name>[-#].tif` 
+- where `-#` is an optional number in the event of multiple same-channel images, e.g.,
 
-	01-red.tif
-	23-blue-2.tif   # an alternative blue channel scan of img 23
-
+```
+    01-red.tif
+    23-blue-2.tif   # an alternative blue channel scan of img 23
+```
 
 Whitespace will be replaced with `-`. This *could* overwrite data if you had two files with identical names sans ` ` and `-`. 
-e.g., 
+e.g.,
 
 	01 red 3.tif >> 01-red-3.tif
 	01 red-3.tif >> 01-red-3.tif    # will clobber the file above
