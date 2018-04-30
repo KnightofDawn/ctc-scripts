@@ -39,5 +39,5 @@ e.g.,
 Any .tif with a `channel_name` *starting with* `bf` is assumed to be a brightfield image and is excluded from any merges. So as long as blue channels are not named `bf*` things should be okay.
 e.g.,
 
-	01-bf.tif, 01-bf-2.tif, 01-bf_actuallybluetrustme.tif # excluded
+	01-bf.tif, 01-bf-2.tif, 01-bflue, 01-bf_actuallybluetrustme.tif # excluded
 	01-bl.tif, 01-blbfue.tif  # blue
