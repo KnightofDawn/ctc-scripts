@@ -41,29 +41,38 @@ Terminology (for variable names):
     plate/sample : one sample of cells being imaged, a folder of images
 """
 
-### Script Info
-__author__ = 'Nick Chahley, https://github.com/nickchahley'
-__version__ = '0.1.2'
-__day__ = '2018-04-30'
-
-import subprocess
+from __future__ import division
+import numpy as np
 import os
 from glob import glob
 import itertools
 import argparse
 import sys
+import scipy.ndimage as ndi
+import cv2
+import imageio
+
+### Script Info
+__author__ = 'Nick Chahley, https://github.com/nickchahley'
+__version__ = '0.2'
+__day__ = '2018-06-17'
 
 ### Command line flags/options
-parser = argparse.ArgumentParser()
-parser.add_argument('-v', '--debug', dest='debug', action='store_true')
-parser.set_defaults(debug=False)
-parser.add_argument('-d', '--defdir', type=str, help='Def dir for path dialog')
-# Access an arg value by the syntax 'args.<argument_name>'
-args = parser.parse_args()
+def parse_args():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('-d', '--defdir', type=str, help='Def dir for path dialog')
+    parser.add_argument('-s', '--sigma', type=float, default=50., 
+                        help='Sigma value for gaussian blur during illumination\
+                        correction.')
+    # possible future: preprocess on/off
+
+    args = parser.parse_args()
+    return args
 
 ### Options
 opt = {}
-opt['outdir'] = 'merged'
+opt['outdir'] = 'merged_corrected'
 
 ### Function Defs
 def popup_message(text = '', title='Message'):
@@ -168,6 +177,9 @@ def tiffs_clean_filter(filenames):
 def tiffs_group(filenames):
     """ Group the channel files into dict by 2 digit prefix in filename.
 
+    filenames : list
+    ret channels : dict
+
     Naming conventions (assumed):
         <dd>-<color[text]>.tif : for 1st scans "norm"
         <dd>-<color[text]>-<d>.tif : for 2nd+ scans "abnorm"
@@ -243,72 +255,74 @@ def tiffs_iterate_combos(d):
     
     # dict of list of tuples
     return imgs
-def im_command(rgb, outfile, outdir):
-    """ Generate imagemagick command from tuple of rgb channel filenames.
-    """   
-    outfile = '%s/%s' %(outdir, outfile)
-    cmd = 'convert %s -combine %s' %(' '.join(rgb), outfile)
-    return cmd
-def merge_im(imgs, outdir):
-    """ Generate the imagemagick merge commands.
 
-    imgs : dict 
+def preproc_imgs(imgs, oudtdir='preproc'):
+    """ Hastily commented preprocessing. 'uids' is a dumb name for this dict.
+
+    imgs : dict w/ image numbers as keys 
     """
-    # will be {outputname : tuple of r,g.b}
-    outs = {}
+    # need to separate multi rgb comb images into unique im number
+    uids = {}
 
-    ## Generate output filenames
-    for imgid, rgb_tuples in imgs.iteritems():
-        for i in range(len(rgb_tuples)):
-            outname = '%s-rgb-%d.tif' %(imgid, i+1)
-            # don't append '-1' to first rgb combo outfile
-            outname = outname.replace('-1.tif', '.tif')
-            outs[outname] = rgb_tuples[i]
+    # Get a unique id for each distinct len3 list of r,g,b files
+    for k, imls in imgs.iteritems():
+        uids[k] = imls[0]
+        if len(imls) > 1:
+            # we have multiple rgb combos so append them image num/uid
+            for i in range(1,len(imls)):
+                uid = '-'.join((k, str(i+1)))
+                uids[uid] = imls[i]
+    
+    def imread_as_8bit(imfile):
+        """Open 16bit tiff and rescale to 8bit
+        """
+        im = cv2.imread(imfile, -1)
+        im8 = cv2.convertScaleAbs(im, alpha = (255.0/65535.0))
+        return im8
+    def illum_correction(x, sigma, method='subtract'):
+        """ Gaussian blurr background subtraction.
+        Aim is to smooth image until it is devoid of features, but retains the
+        weighted average intensity across the image that corresponds to the
+        underlying illumination pattern. Then subtract
 
-    cmds = [im_command(v, k, outdir) for k, v in outs.iteritems()]
-    cmds.sort()
-
-    return cmds
-def merge_im_dbg(imgs, outdir):
-    """ Generate the imagemagick merge commands.
-
-    imgs : dict 
-    """
-    # will be {outputname : tuple of r,g.b}
-    outs = {}
-
-    ## Generate output filenames
-    for imgid, rgb_tuples in imgs.iteritems():
-        for i in range(len(rgb_tuples)):
-            outname = '%s-rgb-%d.tif' %(imgid, i+1)
-            # don't append '-1' to first rgb combo outfile
-            outname = outname.replace('-1.tif', '.tif')
-            outs[outname] = rgb_tuples[i]
-
-    cmds = [im_command(v, k, outdir) for k, v in outs.iteritems()]
-    cmds.sort()
-
-    return cmds, outs
-
-### Graveyard
-def rename_no_whitespace(filenames):
-    # Assume we are in dir containing files to be renamed
-    for f in filenames:
-        os.rename(f, f.replace(" ", "-"))
-
-### Test
-## testing scratch
-def test():
-    names = ['06-blue.tif', '06-blue2.tif', '06-blue-2.tif', '06-b7ue.tif',
-             '06-blue10.tif', '07 red.tif', '07 red 2.tif', '07 red-3.tif']
-    renames = rename(names)
-
-    for n, r in zip(names, renames):
-        if n is not r:
-            print('%s >> %s' %(n, r))
+        This correction is only aware of the single image/channel that it is fed.
+        It might be a better idea to try and implement illumination correction
+        using multiple channels/images taken from the same experiment.
+        """
+        y = ndi.gaussian_filter(x, sigma=sigma, mode='constant', cval=0)
+        if method == 'subtract':
+            return cv2.subtract(x, y)
+        elif method == 'divide':
+            return cv2.divide(x, y)
         else:
-            print(n)
-# test()
+            raise ValueError("Unsupported method: %s" %method)
+
+    rgb = {}
+    for uid, imls in uids.iteritems():
+        # list uint8 array for one r, g, and b channel
+        ims = [imread_as_8bit(f) for f in imls] 
+
+        # Guassian blur bg subtraction for each channel
+        ims = [illum_correction(x, args.sigma) for x in ims]
+
+        rgb[uid] = np.dstack(ims)
+    
+    return rgb
+
+def outfile_names(rgb, suffix='rgb', ext='.tif'):
+    """ Take dict of num : rgb im and return outfilename : rgb num
+    """
+
+    for k in rgb.keys():
+        ks = k.split('-')
+        # if im num is of fmt '01-2' make name '01-suffix-2.ext'
+        if len(ks) == 2:
+            fname = '-'.join((ks[0], suffix, ks[-1])) + ext
+        else:
+            fname = '-'.join((k, suffix)) + ext
+        rgb[fname] = rgb.pop(k)
+    return rgb
+
 
 ### Main 
 def main():
@@ -318,27 +332,21 @@ def main():
     filenames = tiffs_clean_filter(filenames)
     channels = tiffs_group(filenames)
     imgs = tiffs_iterate_combos(channels)
+    rgb = preproc_imgs(imgs)
+    rgb = outfile_names(rgb)
 
     # Make output dir if it does not exist
     if not os.path.exists(opt['outdir']):
         os.makedirs(opt['outdir'])
-
-    cmds = merge_im(imgs, opt['outdir'])
     
-    # Messed up by making the command a straight string, subprocess takes a
-    # command as a list with each item being a whitespace separation
-    for c in cmds:
-        if args.debug:
-            f = '/'.join((opt['outdir'], 'debug.log'))
-            s = 'echo %s >> %s' %(c, f)
-            os.system(s)
-        c = c.split(' ')
-        subprocess.call(c)
-        print(c)
+    for fname, im in rgb.iteritems():
+        imageio.imwrite('/'.join((opt['outdir'], fname)), im)
+
+    # FREEDOM
+
 
 # run the main function
 if __name__ == '__main__':
+    args = parse_args()
     main()
     popup_message('Run complete')
-    # TODO if there was a debug flag we could
-    # locals().update(main())

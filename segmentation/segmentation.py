@@ -18,6 +18,7 @@ import cv2
 import mahotas as mh
 import matplotlib.pyplot as plt # to save mask
 import os
+import scipy.ndimage as ndi
 
 ### Parse args
 
@@ -30,7 +31,8 @@ def parse_args():
                     help='Path to input image(s)')
     ap.add_argument('-c', '--cliff', default=0, type=int,
                     help='Apply a crude cliff threshold highpass filter. \
-                    Aimed at supressing filter pore signal (intensity in uint16)')
+                    Aimed at supressing filter pore signal (intensity in \
+                    uint16)')
     args = ap.parse_args()
     return args
 
@@ -77,18 +79,28 @@ def postprocessing(watershed, min_size = 5):
     cleaned, nr_objects = mh.labeled.relabel(cleaned)
 
     return cleaned
-def create_mask(labelled):
-    labelled[labelled > 0] = 1
-    return cleaned
-def segmentation(img, sigma=2.0):
+def segmentation(img, sigma=2.0, threshold_type='rc'):
     """ Really rough image segmentation (objects from bg). 
 
+    threshold_type : 'yen' or 'rc', defaults to yen if not 'rc'
     Needs tests for circularity, refinement
     """
-    bin_img = th_rc(img, sigma=sigma)
+    if threshold_type == 'rc':
+        # Riddler-Calvar is more conservative, more likely to include filter
+        # pores as foreground.
+        bin_img = th_rc(img, sigma=sigma)
+
+    else:
+        # Yen is more aggressive, more likely to exclude cells from foreground.
+        # However, this fucks up mh.distance
+        from skimage.filters.thresholding import threshold_yen
+        img_smooth = ndi.filters.gaussian_filter(img, sigma=sigma)
+        bin_img = threshold_yen(img_smooth)
+
     watershed = segment_objects(img, bin_img, sigma=sigma)
-    cleaned = postprocessing(watershed)
-    return cleaned
+    watershed = postprocessing(watershed) # "cleaned watershed"
+
+    return watershed
 def segmentation_mask(img, outline=True):
     """ Return the segmented mask (bool) of an image. 
     Optionally as an outline only.
@@ -104,8 +116,27 @@ def segmentation_mask(img, outline=True):
         magnitude = np.hypot(edge_hrz, edge_vrt)
         magnitude = magnitude.astype('bool') # from float16
         return magnitude
+
     else:
         return mask
+
+def circularity(watershed):
+    """Return dict of object/segment id and circularity value.
+
+    watershed : ndarray of labeled objects where bg = 0 and fg > 1
+
+    Depends on mahotas
+    """
+    ws = watershed
+    d = {}
+
+    for ob_id in np.unique(ws):
+        if ob_id != 0:
+            ob = ws == ob_id
+            circ = mh.features.roundness(ob)
+            d[ob_id] = circ
+
+    return d
 
 ### In/Out
 def output_mask(imagefile, mask, outdir='masks'):

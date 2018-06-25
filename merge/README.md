@@ -7,7 +7,8 @@ Batch merge a folder of greyscale tiff color channel files into rgb images. Addi
 ----
 # Dependencies
 - Python 2.7 (if you need to install, [Anaconda](https://www.anaconda.com/download/) is recommended)
-- [ImageMagick](https://www.imagemagick.org/script/index.php)
+- openCV
+- PyLibTiff
 
 ----
 # Usage Notes
