@@ -1,9 +1,34 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # -*- coding: utf-8 -*-
-""" Batch merge single color channel tiffs into one file, ignoring bright field
-images try to handle spelling errors. If there's more than one tiff of a given
-color channel, create additional merges of all possible combinations of rgb
-channels.
+""" Merge greyscale single channel (r,g,b) tiffs into one rgb composite while
+applying a simple correction for uneven illumination. 
+
+Usage
+-----
+
+Run as an clickable executable or from a terminal. In the popup window select
+the folder containing the images to be merged. The merged images will be
+written to `merge_corrected/<num>-rgb.tif` by default and **will overwrite
+prexisting files in the event of naming conflicts**. See below for more
+information on filename conventions. See `./channel_merge.py --help` to see
+additional options. 
+
+Image Processing
+----------------
+
+Illumination correction method is a guassian blur background subtraction. The
+standard deviation of the gaussian kernel (sigma) is selectable via
+command-line flags, or by editing the default value within parse_args. The
+values of sigma that give acceptable results will likely be heavily dependent
+on image set.
+
+Input Filenames
+---------------
+
+Metadata about image and channel identity will be extracted from filenames;
+trying to ignore bright field images and handle typos. If there's more than one
+tiff of a given color channel, will create additional merges of all possible
+combinations of rgb channels.
 
 Assumes the following file naming conventions:
     <two digit id>-<channel_name><optional '-2/3/etc'>.tif
@@ -50,29 +75,35 @@ import argparse
 import sys
 import scipy.ndimage as ndi
 import cv2
-import imageio
+from libtiff import TIFF
 
 ### Script Info
 __author__ = 'Nick Chahley, https://github.com/nickchahley'
-__version__ = '0.2'
-__day__ = '2018-06-17'
+__version__ = '0.2.1'
+__day__ = '2018-06-21'
 
 ### Command line flags/options
 def parse_args():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('-d', '--defdir', type=str, help='Def dir for path dialog')
+    parser.add_argument('-p', '--defdir', type=str, help='Def dir for Path dialog')
     parser.add_argument('-s', '--sigma', type=float, default=50., 
-                        help='Sigma value for gaussian blur during illumination\
-                        correction.')
-    # possible future: preprocess on/off
-
+                        help='Sigma value for gaussian blur during illumination \
+                        correction. Note: the useable range for this value is \
+                        greatly dependent on the image set. Best to experiment.')
+    parser.add_argument('-d', '--outdir', type=str, help='Name of dir to output \
+                        merged images to. Created if DNE.', default='merged_corrected') 
+    parser.add_argument('-n', '--nopop', action='store_true', dest='no_popup',
+                        help='Supress "Run Complete" popup message. Useful for \
+                        batch running, since otherwise the message must be closed \
+                        by user input before the script exits.')
+    parser.add_argument('--path', type=str, help='skip gui and use this path')
+    # possible future: preprocess on/off 
     args = parser.parse_args()
+    if args.path:
+        args.no_popup = True 
     return args
 
-### Options
-opt = {}
-opt['outdir'] = 'merged_corrected'
 
 ### Function Defs
 def popup_message(text = '', title='Message'):
@@ -89,7 +120,8 @@ def popup_message(text = '', title='Message'):
 
     messagebox.showinfo(title, text)  # show the messagebo
 def path_dialog(whatyouwant):
-    """ Prompt user to select a dir (def) or file, return its path
+    """ 
+    Prompt user to select a dir (def) or file, return its path
 
     In
     ---
@@ -134,60 +166,83 @@ def path_dialog(whatyouwant):
         sys.exit(m)
 
     return path
-def format_trailing_nums(s):
-    import re
-
-    # trim .extension
-    sp = '.'.join(s.split('.')[:-1])
-
-    # match digits at end of string
-    m = re.search('\d+$', sp)
-    if not m:
-        # string does not end in num
-        new = s
-    else:
-        # string ends in num
-        endnum = m.group()
-        new = endnum.join(sp.split(endnum)[:-1])
-        if new[-1] == '-':
-            # Trailing '-', rm to avoid getting '01-blue--2.tif'
-            new = new[:-1]
-        ext = '.' + s.split('.')[-1]
-        new = '-'.join((new, endnum)) + ext
-
-    return new
-def format_filenames(filenames):
-    # replace whitespace
-    filenames = [f.replace(' ', '-') for f in filenames]
-    # ensure trailing digits are separated from channel_name w/ '-'
-    filenames = [format_trailing_nums(f) for f in filenames]
-
-    return filenames
-def rename(filenames):
-    for old, new in zip(filenames, format_filenames(filenames)):
-        os.rename(old, new)
-def tiffs_clean_filter(filenames):
-    """ replace whitespace and exclude bright field tiff files
+def cleanup_filenames(filenames):
+    """ 
+    replace whitespace and exclude bright field tiff files
     """
-    # rename_no_whitespace(filenames)
+    def rename(filenames):
+        def format_filenames(filenames):
+            def format_trailing_nums(s):
+                import re
+
+                # trim .extension
+                sp = '.'.join(s.split('.')[:-1])
+
+                # match digits at end of string
+                m = re.search('\d+$', sp)
+                if not m:
+                    # string does not end in num
+                    new = s
+                else:
+                    # string ends in num
+                    endnum = m.group()
+                    new = endnum.join(sp.split(endnum)[:-1])
+                    if new[-1] == '-':
+                        # Trailing '-', rm to avoid getting '01-blue--2.tif'
+                        new = new[:-1]
+                    ext = '.' + s.split('.')[-1]
+                    new = '-'.join((new, endnum)) + ext
+
+                # correct no seperator following prefix digits
+                # if I was good at regex this would take like zero lines
+                pfx = new.split('-')[0]
+                if not pfx.isdigit():
+                    m = re.search('^\d+', pfx)
+                    if m:
+                        mid = pfx.replace(m.group(), '')
+                        end = '-'.join(new.split('-')[1:])
+                        new = '-'.join((m.group(), mid, end))
+
+                return new
+            # replace whitespace
+            filenames = ['-'.join(f.split()) for f in filenames]
+
+            # ensure trailing digits are separated from channel_name w/ '-'
+            filenames = [format_trailing_nums(f) for f in filenames]
+            return filenames
+        for old, new in zip(filenames, format_filenames(filenames)):
+            os.rename(old, new)
     rename(filenames)
     filenames = [f for f in filenames if '-bf' not in f]
     filenames.sort()
     return filenames
-def tiffs_group(filenames):
-    """ Group the channel files into dict by 2 digit prefix in filename.
+def group_images(filenames):
+    """ 
+    Return a dict containing image numbers as keys and a list of their
+    associated filenames as values. 
+    
+    Issue: Numeric prefix was assumed to be always two digits, which is not
+    the case. The `n+'-'` is too general and files w/ 3 digit prefixis will be
+    grouped with 2 digit ones if they contain that 2 digit number. 
+    eg,
+        [01]-red.tif  : group 01
+        1[01]-red.tif : group 01
+    TODO: regex or something to tighten this up. This is also solved by
+    prepending 0 to the 2 digit files, 
+        rename 's/(^\d{2}-)/0$1/' *.tif
 
     filenames : list
     ret channels : dict
 
     Naming conventions (assumed):
         <dd>-<color[text]>.tif : for 1st scans "norm"
-        <dd>-<color[text]>-<d>.tif : for 2nd+ scans "abnorm"
+        <dd>-<color[text]>-<d>.tif : for 2nd+ scans "extra"
     """
+    # Get one list item for each unique image number
     nums = [f.split('-')[0] for f in filenames]
     nums = sorted(set(nums)) # rm repeats and back to sorted list
     
-    ## Make dict of img num and channel files
+    # Make dict of img num and channel files
     channels = [] 
     for n in nums:
         channels.append([f for f in filenames if n+'-' in f])
@@ -196,7 +251,8 @@ def tiffs_group(filenames):
 
     return channels
 def channel_combos(files):
-    """ Infer channel colors from names and return a dict with the names of all
+    """ 
+    Infer channel colors from names and return a dict with the names of all
     files for each color
 
     In
@@ -212,10 +268,10 @@ def channel_combos(files):
               'g' : [],
               'b' : []}
 
-    ## interrogate channel color from filename: look at first letter 
-    ## and assume r* = red, etc
+    # interrogate channel color from filename: look at first letter 
+    # and assume r* = red, etc
     for f in files:
-        # get the first letter of word following '**-'
+        # get the first letter of word following the img num prefix ('\d*-')
         c = f.split('-')[1].lower()[0]
         if c is 'r':
             colors['r'].append(f)
@@ -234,8 +290,8 @@ def channel_combos(files):
     # List of tuples, each tuple is one combo of rgb channels
     return combos
 def tiffs_iterate_combos(d):
-    """ Ret dict with key for each image number make all possible rgb 
-    combinations. 
+    """ 
+    Ret dict with key for each image number make all possible rgb combinations. 
 
     In
     ---
@@ -256,31 +312,36 @@ def tiffs_iterate_combos(d):
     # dict of list of tuples
     return imgs
 
-def preproc_imgs(imgs, oudtdir='preproc'):
-    """ Hastily commented preprocessing. 'uids' is a dumb name for this dict.
+## Resturaunt Nouveau System
+def preproc_imgs(imgs, sigma, oudtdir='preproc'):
+    """ 
+    Hastily commented preprocessing. 'uids' is a dumb name for this dict.
 
     imgs : dict w/ image numbers as keys 
     """
-    # need to separate multi rgb comb images into unique im number
-    uids = {}
+    def get_uids(imgs):
+        # Get a unique id for each distinct len3 list of r,g,b files
+        uids = {}
+        for k, imls in imgs.iteritems():
+            if len(imls) == 1:
+                if type(imls[0]) is list:
+                    # then we have a len1 list containing another list for some reason
+                    # flatten it
+                    uids[k] = imls[0]
+                else:
+                    uids[k] = imls
 
-    # Get a unique id for each distinct len3 list of r,g,b files
-    for k, imls in imgs.iteritems():
-        uids[k] = imls[0]
-        if len(imls) > 1:
-            # we have multiple rgb combos so append them image num/uid
-            for i in range(1,len(imls)):
-                uid = '-'.join((k, str(i+1)))
-                uids[uid] = imls[i]
-    
-    def imread_as_8bit(imfile):
-        """Open 16bit tiff and rescale to 8bit
-        """
-        im = cv2.imread(imfile, -1)
-        im8 = cv2.convertScaleAbs(im, alpha = (255.0/65535.0))
-        return im8
+            if len(imls) > 1:
+                # we have multiple rgb combos, append nums >1 to num/uid
+                uids[k] = imls[0]
+                for i in range(1,len(imls)):
+                    uid = '-'.join((k, str(i+1)))
+                    uids[uid] = imls[i]
+        return uids
     def illum_correction(x, sigma, method='subtract'):
-        """ Gaussian blurr background subtraction.
+        """ 
+        Gaussian blurr background subtraction.
+
         Aim is to smooth image until it is devoid of features, but retains the
         weighted average intensity across the image that corresponds to the
         underlying illumination pattern. Then subtract
@@ -297,18 +358,28 @@ def preproc_imgs(imgs, oudtdir='preproc'):
         else:
             raise ValueError("Unsupported method: %s" %method)
 
+    uids = get_uids(imgs)
+    # For each set of 3 channel filenames, read each image, preform
+    # illumination correction, and stack them together into an rgb image.
     rgb = {}
     for uid, imls in uids.iteritems():
-        # list uint8 array for one r, g, and b channel
-        ims = [imread_as_8bit(f) for f in imls] 
+
+        # List of greyscale channel ims : r,g,b
+        ims = [tiffread(f) for f in imls] 
 
         # Guassian blur bg subtraction for each channel
-        ims = [illum_correction(x, args.sigma) for x in ims]
+        ims_corr = [illum_correction(x, sigma) for x in ims]
 
-        rgb[uid] = np.dstack(ims)
+        try:
+            rgb[uid] = np.dstack(ims_corr)
+        except ValueError as e:
+            print('Skipping image # %s. Channels have non uniform shape? %s' 
+                  % (uid, e))
+            print('R: %s' % str(ims_corr[0].shape))
+            print('G: %s' % str(ims_corr[1].shape))
+            print('B: %s' % str(ims_corr[2].shape))
     
     return rgb
-
 def outfile_names(rgb, suffix='rgb', ext='.tif'):
     """ Take dict of num : rgb im and return outfilename : rgb num
     """
@@ -322,25 +393,67 @@ def outfile_names(rgb, suffix='rgb', ext='.tif'):
             fname = '-'.join((k, suffix)) + ext
         rgb[fname] = rgb.pop(k)
     return rgb
+def tiffread(f):
+    """
+    Return a single array if given a filename, and a rgb stack if fed a len 3
+    list of filenames.
+
+    f : str or list (len 3), filename(s) to be read.
+
+    ret : 2d or 3d ndarray
+    """
+    if type(f) is str:
+        # single image
+        tif = TIFF.open(f, mode='r')
+        return tif.read_image()
+
+    elif type(f) is list and len(f) == 3:
+        # return rgb stack
+        f.sort(reverse=True) # so r, g, b
+        tif = [TIFF.open(x, mode='r') for x in f]
+        ims = [t.read_image() for t in tif]
+        return np.dstack(ims)
+    else:
+        raise ValueError("f must be a string or list of 3 strings")
+def tiffwrite(filename, im):
+    tif = TIFF.open(filename, mode='w')
+    # Write as a composite r,g,b if it looks like one
+    if len(im.shape) == 3 and im.shape[-1] == 3:
+        tif.write_image(im, write_rgb = True)
+    else:
+        tif.write_image(im)
 
 
 ### Main 
 def main():
-    path = path_dialog(whatyouwant = 'folder')
+    if args.path:
+        path = args.path
+        rootpath = os.getcwd()
+    else:
+        path = path_dialog(whatyouwant = 'folder')
     os.chdir(path)
-    filenames = glob("*.tif")
-    filenames = tiffs_clean_filter(filenames)
-    channels = tiffs_group(filenames)
+
+    # Filename String Manipulations
+    filenames = cleanup_filenames(glob("*.tif"))
+    channels = group_images(filenames)
+
+    # Image Processing
+    print('Processing images...')
     imgs = tiffs_iterate_combos(channels)
-    rgb = preproc_imgs(imgs)
+    rgb = preproc_imgs(imgs, sigma = args.sigma)
     rgb = outfile_names(rgb)
 
     # Make output dir if it does not exist
-    if not os.path.exists(opt['outdir']):
-        os.makedirs(opt['outdir'])
+    print('Writing images to %s' % args.outdir)
+    if not os.path.exists(args.outdir):
+        os.makedirs(args.outdir)
     
     for fname, im in rgb.iteritems():
-        imageio.imwrite('/'.join((opt['outdir'], fname)), im)
+        tiffwrite('/'.join((args.outdir, fname)), im)
+
+    if args.path:
+        # go back to root as to not mess up next script exec
+        os.chdir(rootpath)
 
     # FREEDOM
 
@@ -349,4 +462,5 @@ def main():
 if __name__ == '__main__':
     args = parse_args()
     main()
-    popup_message('Run complete')
+    if args.no_popup == False:
+        popup_message('Run complete')
