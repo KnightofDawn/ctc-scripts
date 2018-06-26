@@ -1,6 +1,7 @@
 #!/usr/bin/env python2
 # -*- coding: utf-8 -*-
-""" Merge greyscale single channel (r,g,b) tiffs into one rgb composite while
+""" 
+Merge greyscale single channel (r,g,b) tiffs into one rgb composite while
 applying a simple correction for uneven illumination. 
 
 Usage
@@ -79,8 +80,8 @@ from libtiff import TIFF
 
 ### Script Info
 __author__ = 'Nick Chahley, https://github.com/nickchahley'
-__version__ = '0.2.1'
-__day__ = '2018-06-21'
+__version__ = '0.2.2'
+__day__ = '2018-06-25'
 
 ### Command line flags/options
 def parse_args():
